@@ -1,0 +1,125 @@
+# Default configuration for Llama 3.3 fine-tuning project
+
+# Data processing configuration
+data:
+  # Word document processing
+  word:
+    input_dir: "data/raw/documents/"
+    output_dir: "data/processed/documents/"
+    recursive: true
+    preserve_structure: true
+    extract_images: false
+    extract_tables: true
+    min_text_length: 50
+    max_documents: -1  # -1 means process all documents
+    file_extensions: [".docx", ".doc"]
+  
+  # DB log processing
+  logs:
+    input_dir: "data/raw/logs/"
+    output_dir: "data/processed/logs/"
+    format: "auto"  # auto, sql, json, csv
+    time_filter:
+      start_date: null  # Format: YYYY-MM-DD or null
+      end_date: null    # Format: YYYY-MM-DD or null
+    error_handling: "skip"  # skip, warn, fail
+  
+  # Dataset preparation
+  dataset:
+    docs_dir: "data/processed/documents/"
+    logs_dir: "data/processed/logs/"
+    output_dir: "data/processed/dataset/"
+    train_split: 0.8
+    val_split: 0.1
+    test_split: 0.1
+    format: "jsonl"  # jsonl, csv, parquet
+    shuffle: true
+    seed: 42
+    max_examples: -1  # -1 means use all available examples
+    categorize_by_folder: true
+
+# Model configuration
+model:
+  base_model: "meta-llama/Llama-3.3-8B"  # Base model to fine-tune
+  model_revision: "main"  # Model revision to use
+  tokenizer: null  # null means use the same as base_model
+  output_dir: "data/models/finetuned-model/"
+  cache_dir: ".cache/"
+  trust_remote_code: false
+
+# Training configuration
+training:
+  # Basic training parameters
+  learning_rate: 2e-5
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  num_train_epochs: 3
+  max_steps: -1  # -1 means train for num_train_epochs
+  warmup_steps: 500
+  weight_decay: 0.01
+  save_steps: 1000
+  logging_steps: 100
+  eval_steps: 1000
+  save_total_limit: 3  # Number of checkpoints to keep
+  
+  # Precision and hardware
+  fp16: false  # Use 16-bit precision training
+  bf16: true   # Use bfloat16 precision training
+  device: "cuda"  # cuda, cpu
+  num_gpus: "auto"  # auto or specific number
+  
+  # Advanced options
+  optimizer: "adamw_torch"
+  lr_scheduler: "cosine"
+  max_grad_norm: 1.0
+  seed: 42
+
+# LoRA configuration (parameter-efficient fine-tuning)
+lora:
+  use_lora: true
+  r: 16       # Rank of the update matrices
+  alpha: 32   # Scaling factor
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  bias: "none"  # none, all, lora_only
+  task_type: "CAUSAL_LM"
+  
+# QLoRA configuration (quantized LoRA)
+qlora:
+  use_qlora: false  # Set to true to use QLoRA instead of LoRA
+  bits: 4           # Quantization bits (4 or 8)
+  double_quant: true
+  quant_type: "nf4"  # nf4 or fp4
+  
+# Evaluation configuration
+evaluation:
+  metrics: ["perplexity", "accuracy", "f1"]
+  generate:
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    max_new_tokens: 256
+    num_return_sequences: 1
+    num_beams: 1
+
+# Experiment tracking
+tracking:
+  use_wandb: false
+  wandb_project: "llama-3-3-finetuning"
+  wandb_entity: null
+  use_tensorboard: true
+  report_to: ["tensorboard"]  # wandb, tensorboard
+
+# Paths and directories
+paths:
+  data_dir: "data/"
+  logs_dir: "logs/"
+  output_dir: "outputs/"
+
+# System configuration
+system:
+  seed: 42
+  mixed_precision: true
+  deterministic: false
+  num_workers: 4
