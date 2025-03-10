@@ -129,3 +129,194 @@ class WordDocProcessor:
             output_path = self.output_dir / f"{input_path.stem}{suffix}"
 
         return output_path
+
+    def _extract_images_from_docx(self, doc: DocxDocument) -> List[Dict[str, Any]]:
+        """
+        Extract images from a docx Document object.
+        
+        Args:
+            doc: The python-docx Document object
+            
+        Returns:
+            List of image dictionaries with metadata
+        """
+        images = []
+        
+        if not self.options.extract_images:
+            return images
+            
+        try:
+            # Get document part relationships
+            rels = doc.part.rels
+            
+            for rel_id, rel in rels.items():
+                # Check if relationship is an image
+                if rel.reltype == RT.IMAGE:
+                    try:
+                        image_part = rel.target_part
+                        image_filename = image_part.partname.split('/')[-1]
+                        content_type = image_part.content_type
+                        
+                        image_data = {
+                            "filename": image_filename,
+                            "content_type": content_type,
+                        }
+                        
+                        # Extract image data based on chosen format
+                        if self.options.image_format == "base64":
+                            img_bytes = image_part.blob
+                            img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                            image_data["data"] = img_b64
+                            image_data["encoding"] = "base64"
+                        else:  # filename
+                            # Save image to file
+                            rel_doc_path = self.output_dir.relative_to(self.output_dir.parent)
+                            img_path = self.images_dir / rel_doc_path / image_filename
+                            os.makedirs(img_path.parent, exist_ok=True)
+                            
+                            with open(img_path, 'wb') as f:
+                                f.write(image_part.blob)
+                                
+                            image_data["path"] = str(img_path.relative_to(self.output_dir))
+                            
+                        images.append(image_data)
+                    except Exception as e:
+                        logger.warning(f"Error extracting image {rel_id}: {e}")
+        except Exception as e:
+            logger.warning(f"Error accessing document relationships: {e}")
+            
+        return images
+
+    def _extract_tables_from_docx(self, doc: DocxDocument) -> List[List[List[str]]]:
+        """
+        Extract tables from a docx Document object.
+        
+        Args:
+            doc: The python-docx Document object
+            
+        Returns:
+            List of tables, each represented as a list of rows of cells
+        """
+        tables = []
+        
+        if not self.options.extract_tables:
+            return tables
+            
+        try:
+            for table in doc.tables:
+                table_data = []
+                for row in table.rows:
+                    row_data = [cell.text.strip() for cell in row.cells]
+                    table_data.append(row_data)
+                tables.append(table_data)
+        except Exception as e:
+            logger.warning(f"Error extracting tables: {e}")
+            
+        return tables
+
+    def _extract_headers_footers_from_docx(self, doc: DocxDocument) -> Dict[str, List[str]]:
+        """
+        Extract headers and footers from a docx Document object.
+        
+        Args:
+            doc: The python-docx Document object
+            
+        Returns:
+            Dictionary with headers and footers content
+        """
+        headers_footers = {
+            "headers": [],
+            "footers": []
+        }
+        
+        if not self.options.extract_headers_footers:
+            return headers_footers
+            
+        try:
+            # Extract headers
+            for section in doc.sections:
+                try:
+                    if section.header.is_linked_to_previous:
+                        continue
+                        
+                    for paragraph in section.header.paragraphs:
+                        if paragraph.text.strip():
+                            headers_footers["headers"].append(paragraph.text.strip())
+                except Exception as e:
+                    logger.debug(f"Error extracting header: {e}")
+                    
+                try:
+                    if section.footer.is_linked_to_previous:
+                        continue
+                        
+                    for paragraph in section.footer.paragraphs:
+                        if paragraph.text.strip():
+                            headers_footers["footers"].append(paragraph.text.strip())
+                except Exception as e:
+                    logger.debug(f"Error extracting footer: {e}")
+        except Exception as e:
+            logger.warning(f"Error extracting headers and footers: {e}")
+            
+        return headers_footers
+
+    def extract_text_with_python_docx(self, doc_path: Path) -> Dict:
+        """
+        Extract text and metadata from a Word document using python-docx.
+
+        Args:
+            doc_path: Path to the Word document
+
+        Returns:
+            Dictionary with extracted text and metadata
+        """
+        try:
+            doc = docx.Document(doc_path)
+            
+            # Extract paragraphs
+            paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+            
+            # Extract tables if requested
+            tables = self._extract_tables_from_docx(doc) if self.options.extract_tables else []
+            
+            # Extract images if requested
+            images = self._extract_images_from_docx(doc) if self.options.extract_images else []
+            
+            # Extract headers and footers if requested
+            headers_footers = self._extract_headers_footers_from_docx(doc) if self.options.extract_headers_footers else {"headers": [], "footers": []}
+            
+            # Extract document properties
+            properties = {}
+            if self.options.extract_metadata:
+                try:
+                    core_props = doc.core_properties
+                    properties = {
+                        "title": core_props.title or "",
+                        "author": core_props.author or "",
+                        "comments": core_props.comments or "",
+                        "category": core_props.category or "",
+                        "created": str(core_props.created) if core_props.created else "",
+                        "modified": str(core_props.modified) if core_props.modified else "",
+                        "last_modified_by": core_props.last_modified_by or "",
+                        "keywords": core_props.keywords or "",
+                        "subject": core_props.subject or "",
+                        "revision": core_props.revision or "",
+                    }
+                except Exception as e:
+                    logger.warning(f"Error extracting metadata: {e}")
+            
+            return {
+                "paragraphs": paragraphs,
+                "tables": tables,
+                "images": images,
+                "headers": headers_footers["headers"],
+                "footers": headers_footers["footers"],
+                "properties": properties,
+                "full_text": self.options.paragraph_separator.join(paragraphs),
+            }
+            
+        except PackageNotFoundError:
+            # File is not a docx file, might be a legacy .doc file
+            return self.extract_text_from_doc(doc_path)
+        except Exception as e:
+            logger.error(f"Error extracting text from {doc_path} using python-docx: {e}")
+            return None
