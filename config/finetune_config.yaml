@@ -1,0 +1,84 @@
+# Fine-tuning specific configuration
+# This extends default_config.yaml with task-specific settings
+
+# Model configuration
+model:
+  # Use 8B parameter model by default (other options: 70B)
+  base_model: "meta-llama/Llama-3.3-8B"
+  output_dir: "data/models/finetuned-model/"
+
+# Training configuration optimized for fine-tuning
+training:
+  learning_rate: 2e-5
+  batch_size: 8  # Reduce if OOM errors occur
+  gradient_accumulation_steps: 4
+  num_train_epochs: 3
+  max_steps: -1  # -1 means train for num_train_epochs
+  warmup_ratio: 0.03  # Percentage of total steps for warmup
+  
+  # Checkpointing
+  save_steps: 500
+  eval_steps: 500
+  logging_steps: 100
+  save_total_limit: 3
+  
+  # Precision
+  bf16: true  # bfloat16 precision is recommended for Llama models
+  
+  # Learning rate schedule
+  lr_scheduler_type: "cosine"
+  
+# Use LoRA for parameter-efficient fine-tuning
+# This allows fine-tuning with less GPU memory
+lora:
+  use_lora: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+# Dataset configuration
+data:
+  dataset:
+    # Input data
+    docs_dir: "data/processed/documents/"
+    logs_dir: "data/processed/logs/"
+    output_dir: "data/processed/dataset/"
+    
+    # Format
+    format: "jsonl"
+    categorize_by_folder: true
+    
+    # Train/val/test splits
+    train_split: 0.8
+    val_split: 0.1
+    test_split: 0.1
+    
+    # Preprocessing
+    max_seq_length: 2048
+    preprocessing_num_workers: 4
+
+# Specific evaluation settings
+evaluation:
+  metrics: ["perplexity", "accuracy", "f1"]
+  generate:
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.9
+    max_new_tokens: 256
+
+# Optional: QLoRA for even more memory-efficient training
+# Enable if you have memory constraints
+qlora:
+  use_qlora: false  # Set to true to use QLoRA
+  bits: 4
+  double_quant: true
+  quant_type: "nf4"
+
+# Experiment tracking
+tracking:
+  use_wandb: false
+  wandb_project: "llama-3-3-finetuning"
+  report_to: ["tensorboard"]
