@@ -24,10 +24,23 @@ training:
   
   # Precision
   bf16: true  # bfloat16 precision is recommended for Llama models
+  fp16: false  # Don't use fp16 when bf16 is enabled
+  mixed_precision: null  # Use "bf16" or "fp16" for automatic mixed precision training
   
   # Learning rate schedule
   lr_scheduler_type: "cosine"
   
+  # Gradient clipping
+  use_gradient_clipping: true
+  max_grad_norm: 1.0
+  
+  # Early stopping
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.01
+  
+  # Performance optimizations
+  gradient_checkpointing: false  # Enable to reduce memory usage at the cost of speed
+
 # Use LoRA for parameter-efficient fine-tuning
 # This allows fine-tuning with less GPU memory
 lora:
@@ -41,6 +54,9 @@ lora:
 
 # Dataset configuration
 data:
+  train_file: "data/processed/dataset/train.jsonl"
+  validation_file: "data/processed/dataset/val.jsonl"
+  
   dataset:
     # Input data
     docs_dir: "data/processed/documents/"
@@ -56,9 +72,9 @@ data:
     val_split: 0.1
     test_split: 0.1
     
-    # Preprocessing
-    max_seq_length: 2048
-    preprocessing_num_workers: 4
+  # Preprocessing
+  max_seq_length: 2048
+  preprocessing_num_workers: 4
 
 # Specific evaluation settings
 evaluation:
@@ -76,6 +92,60 @@ qlora:
   bits: 4
   double_quant: true
   quant_type: "nf4"
+
+# Checkpoint handling configuration
+checkpoint:
+  dir: null  # If null, defaults to output_dir/checkpoints
+  max_checkpoints: 3
+  save_optimizer_state: true
+  resume_from_checkpoint: null  # Path or ID of checkpoint to resume from
+
+# Hyperparameter optimization
+hyperparameter_optimization:
+  backend: "optuna"  # 'optuna' or 'ray'
+  n_trials: 10
+  timeout: null  # Maximum time in seconds for the study (null for no timeout)
+  metric: "eval_loss"
+  direction: "minimize"  # 'minimize' or 'maximize'
+  search_space:
+    learning_rate:
+      type: "loguniform"
+      low: 1.0e-6
+      high: 1.0e-4
+    lora_r:
+      type: "int"
+      low: 4
+      high: 32
+    lora_alpha:
+      type: "int"
+      low: 8
+      high: 64
+    lora_dropout:
+      type: "uniform"
+      low: 0.0
+      high: 0.3
+    batch_size:
+      type: "categorical"
+      choices: [1, 2, 4, 8]
+    warmup_ratio:
+      type: "uniform"
+      low: 0.01
+      high: 0.1
+
+# Optimizer configuration
+optimizer:
+  type: "adamw"  # 'adamw', 'lion', 'adafactor'
+  weight_decay: 0.01
+  beta1: 0.9  # First beta parameter for Adam-based optimizers
+  beta2: 0.999  # Second beta parameter for Adam-based optimizers
+  epsilon: 1.0e-8  # Epsilon parameter for Adam-based optimizers
+  use_custom_optimizer: false  # Enable for more control over optimizer
+
+# Model merging configuration
+model_merging:
+  quantize_merged_model: false  # Whether to quantize the merged model
+  quantization_bits: 4  # Bits to use for quantization (4 or 8)
+  precision: "bf16"  # Precision to use for merged model
 
 # Experiment tracking
 tracking:
