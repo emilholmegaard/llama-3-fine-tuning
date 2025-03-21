@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 """
-Script for running hyperparameter optimization for Llama 3.3 fine-tuning.
+Hyperparameter optimization script for Llama LoRA fine-tuning.
 """
 
 import os
 import sys
 import logging
 import argparse
-import json
 import yaml
 from datasets import load_dataset
 
@@ -22,35 +21,42 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('hyperopt.log')
+        logging.FileHandler('hyperparameter_optimization.log')
     ]
 )
 logger = logging.getLogger('hyperopt')
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Hyperparameter optimization for Llama fine-tuning')
+    parser = argparse.ArgumentParser(description='Hyperparameter optimization for Llama LoRA fine-tuning')
     
     parser.add_argument(
         '--config', 
         type=str, 
         default='config/finetune_config.yaml',
-        help='Path to configuration YAML file'
+        help='Path to base configuration YAML file'
     )
     
     parser.add_argument(
-        '--backend',
-        type=str,
+        '--search_space', 
+        type=str, 
+        default=None,
+        help='Path to search space YAML file'
+    )
+    
+    parser.add_argument(
+        '--backend', 
+        type=str, 
         choices=['optuna', 'ray'],
         default='optuna',
-        help='Hyperparameter optimization backend (optuna or ray)'
+        help='Hyperparameter optimization backend'
     )
     
     parser.add_argument(
-        '--n_trials',
-        type=int,
+        '--n_trials', 
+        type=int, 
         default=10,
-        help='Number of optimization trials to run'
+        help='Number of trials to run'
     )
     
     parser.add_argument(
@@ -75,7 +81,7 @@ def parse_args():
     parser.add_argument(
         '--output_dir',
         type=str,
-        help='Output directory for optimization results'
+        help='Output directory for hyperparameter search results (overrides config)'
     )
     
     parser.add_argument(
@@ -90,28 +96,35 @@ def parse_args():
         type=str,
         choices=['minimize', 'maximize'],
         default='minimize',
-        help='Optimization direction'
-    )
-    
-    parser.add_argument(
-        '--timeout',
-        type=int,
-        default=None,
-        help='Timeout for the optimization in seconds'
+        help='Direction of optimization'
     )
     
     parser.add_argument(
         '--ray_address',
         type=str,
         default=None,
-        help='Address of Ray cluster for distributed optimization'
+        help='Ray cluster address for distributed optimization'
     )
     
     parser.add_argument(
-        '--search_space',
-        type=str,
+        '--gpus_per_trial',
+        type=float,
+        default=1.0,
+        help='GPUs per trial (can be fractional)'
+    )
+    
+    parser.add_argument(
+        '--timeout',
+        type=int,
         default=None,
-        help='Path to JSON file defining the search space'
+        help='Timeout in seconds for the entire optimization'
+    )
+    
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for reproducibility'
     )
     
     return parser.parse_args()
@@ -121,48 +134,55 @@ def main():
     # Parse arguments
     args = parse_args()
     
-    # Load base config
+    # Load base configuration
+    logger.info(f"Loading base configuration from {args.config}")
     with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+        base_config = yaml.safe_load(f)
+    
+    # Load search space if provided
+    search_space = None
+    if args.search_space:
+        logger.info(f"Loading search space from {args.search_space}")
+        with open(args.search_space, 'r') as f:
+            search_space = yaml.safe_load(f)
+    
+    # Override output directory if provided
+    output_dir = args.output_dir
+    if not output_dir:
+        output_dir = os.path.join(
+            base_config.get('model', {}).get('output_dir', 'data/models/finetuned-model/'),
+            'hpo_results'
+        )
     
     # Get data paths from config if not overridden
-    train_file = args.train_file or config['data'].get('train_file')
-    validation_file = args.validation_file or config['data'].get('validation_file')
+    train_file = args.train_file or base_config.get('data', {}).get('train_file')
+    validation_file = args.validation_file or base_config.get('data', {}).get('validation_file')
     
     if not train_file:
         logger.error("No training file specified. Aborting.")
         sys.exit(1)
     
     if not validation_file:
-        logger.warning("No validation file specified. Using train file for validation.")
+        logger.warning("No validation file specified. Using training data for evaluation.")
         validation_file = train_file
     
-    # Define output directory
-    output_dir = args.output_dir or os.path.join(
-        config['model']['output_dir'],
-        'hyperopt'
-    )
-    
     # Initialize hyperparameter optimizer
-    logger.info(f"Initializing hyperparameter optimizer with backend: {args.backend}")
+    logger.info(f"Initializing hyperparameter optimizer with {args.backend} backend")
     optimizer = HyperparameterOptimizer(
         base_config_path=args.config,
         backend=args.backend,
         n_trials=args.n_trials,
         timeout=args.timeout,
-        study_name="llama-lora-optimization",
         direction=args.direction,
         metric=args.metric,
-        seed=config['training'].get('seed', 42),
-        ray_address=args.ray_address
+        seed=args.seed,
+        ray_address=args.ray_address,
+        n_gpus_per_trial=args.gpus_per_trial
     )
     
-    # Load custom search space if provided
-    if args.search_space:
-        with open(args.search_space, 'r') as f:
-            search_space = json.load(f)
+    # Set custom search space if provided
+    if search_space:
         optimizer.set_search_space(search_space)
-        logger.info(f"Loaded custom search space from {args.search_space}")
     
     # Load datasets
     logger.info(f"Loading training dataset from {train_file}")
@@ -179,17 +199,33 @@ def main():
     # Load the datasets
     raw_datasets = load_dataset(extension, data_files=data_files)
     
-    # Run optimization
+    # Run hyperparameter optimization
     logger.info(f"Starting hyperparameter optimization with {args.n_trials} trials")
-    best_params = optimizer.optimize(
-        train_dataset=raw_datasets["train"],
-        eval_dataset=raw_datasets.get("validation"),
-        optimization_output_dir=output_dir
-    )
+    try:
+        best_params = optimizer.optimize(
+            train_dataset=raw_datasets["train"],
+            eval_dataset=raw_datasets.get("validation"),
+            optimization_output_dir=output_dir
+        )
+        
+        logger.info(f"Hyperparameter optimization completed. Best parameters: {best_params}")
+        
+        # Load best config
+        best_config_path = os.path.join(output_dir, "best_config.yaml")
+        if os.path.exists(best_config_path):
+            logger.info(f"Best configuration saved to {best_config_path}")
+            print(f"\nBest configuration saved to {best_config_path}")
+            
+            # Display best parameters
+            print("\nBest hyperparameters:")
+            for param_name, param_value in best_params.items():
+                print(f"  {param_name}: {param_value}")
+        
+    except Exception as e:
+        logger.error(f"Error during hyperparameter optimization: {e}", exc_info=True)
+        sys.exit(1)
     
-    logger.info(f"Hyperparameter optimization completed")
-    logger.info(f"Best parameters: {best_params}")
-    logger.info(f"Results saved to {output_dir}")
+    logger.info("Hyperparameter optimization process completed successfully")
 
 if __name__ == "__main__":
     main()
