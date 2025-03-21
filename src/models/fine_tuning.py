@@ -5,7 +5,6 @@ Fine-tuning utilities for Llama models using LoRA and QLoRA.
 import os
 import logging
 import yaml
-import json
 from typing import Dict, Any, Optional, List, Union, Tuple
 
 import torch
@@ -41,85 +40,53 @@ class GradientClippingCallback(TrainerCallback):
     def __init__(self, max_grad_norm: float = 1.0):
         self.max_grad_norm = max_grad_norm
     
-    def on_step_end(
-        self,
-        args: TrainingArguments,
-        state: TrainerState,
-        control: TrainerControl,
-        **kwargs
-    ) -> TrainerControl:
-        """Apply gradient clipping after backward pass but before optimizer step."""
-        if "model" in kwargs and "optimizer" in kwargs:
-            # Get model and optimizer from kwargs
-            model = kwargs["model"]
-            optimizer = kwargs["optimizer"]
-            
-            # Clip gradients
+    def on_step_end(self, args: TrainingArguments, state: TrainerState, 
+                   control: TrainerControl, **kwargs) -> TrainerControl:
+        """Clip gradients after optimizer.step()."""
+        if hasattr(kwargs, "model") and kwargs["model"].parameters():
             torch.nn.utils.clip_grad_norm_(
-                parameters=model.parameters(),
-                max_norm=self.max_grad_norm
+                kwargs["model"].parameters(), 
+                self.max_grad_norm
             )
-            
-            logger.debug(f"Gradient clipped with max norm: {self.max_grad_norm}")
-        
         return control
 
-class CustomCheckpointCallback(TrainerCallback):
-    """Callback for custom checkpoint handling."""
+class CheckpointCallback(TrainerCallback):
+    """Callback for saving checkpoints with the CheckpointHandler."""
     
-    def __init__(self, checkpoint_handler: CheckpointHandler, checkpoint_steps: int = 500):
+    def __init__(self, checkpoint_handler: CheckpointHandler):
         self.checkpoint_handler = checkpoint_handler
-        self.checkpoint_steps = checkpoint_steps
     
-    def on_step_end(
-        self,
-        args: TrainingArguments,
-        state: TrainerState,
-        control: TrainerControl,
-        **kwargs
-    ) -> TrainerControl:
-        """Save checkpoint at specified intervals."""
-        if state.global_step % self.checkpoint_steps == 0:
-            model = kwargs.get("model")
-            optimizer = kwargs.get("optimizer")
-            
-            # Get LR scheduler if available
-            scheduler = None
-            if "lr_scheduler" in kwargs:
-                scheduler = kwargs["lr_scheduler"]
-            
-            # Get metrics
-            metrics = {
-                "loss": state.log_history[-1].get("loss") if state.log_history else None,
-                "learning_rate": state.log_history[-1].get("learning_rate") if state.log_history else None
-            }
-            
-            # Save checkpoint
-            if model is not None:
-                self.checkpoint_handler.save_checkpoint(
-                    model=model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    step=state.global_step,
-                    epoch=state.epoch,
-                    metrics=metrics,
-                    extra_data={"args": args.to_dict()}
-                )
-                
-                logger.info(f"Saved checkpoint at step {state.global_step}")
+    def on_save(self, args: TrainingArguments, state: TrainerState, 
+               control: TrainerControl, **kwargs) -> TrainerControl:
+        """Save checkpoints using CheckpointHandler."""
+        model = kwargs.get("model")
+        optimizer = kwargs.get("optimizer")
+        lr_scheduler = kwargs.get("lr_scheduler")
+        
+        metrics = state.log_history[-1] if state.log_history else {}
+        
+        # Save checkpoint
+        self.checkpoint_handler.save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            scheduler=lr_scheduler,
+            step=state.global_step,
+            epoch=state.epoch,
+            metrics=metrics
+        )
         
         return control
 
 class LlamaFineTuner:
     """
     Fine-tuning class for Llama models using PEFT methods (LoRA and QLoRA).
+    Supports different optimizers, checkpoint handling, and advanced training configurations.
     """
     
     def __init__(
         self,
         config_path: str,
-        local_rank: int = -1,
-        resume_from_checkpoint: Optional[str] = None
+        local_rank: int = -1
     ):
         """
         Initialize the fine-tuner from a configuration file.
@@ -127,64 +94,11 @@ class LlamaFineTuner:
         Args:
             config_path: Path to YAML configuration file
             local_rank: Local rank for distributed training
-            resume_from_checkpoint: Path to checkpoint to resume from (optional)
         """
         self.local_rank = local_rank
-        self.resume_from_checkpoint = resume_from_checkpoint
         self.load_config(config_path)
-        
-        # Initialize checkpoint handler
-        checkpoint_dir = self.training_config.get("checkpoint_dir") or os.path.join(self.output_dir, "checkpoints")
-        max_checkpoints = self.training_config.get("checkpoint_keep_limit", 3)
-        self.checkpoint_handler = CheckpointHandler(
-            checkpoint_dir=checkpoint_dir,
-            max_checkpoints=max_checkpoints,
-            save_optimizer_state=True
-        )
-        
-        # Setup model
         self.setup_model()
-        
-        # Initialize optimizer and scheduler (will be set during training)
-        self.optimizer = None
-        self.scheduler = None
-        
-        # Load checkpoint if resuming
-        if self.resume_from_checkpoint:
-            self.resume_from_checkpoint = self._resolve_checkpoint_path(self.resume_from_checkpoint)
-            if self.resume_from_checkpoint:
-                self.resume()
-        
-    def _resolve_checkpoint_path(self, checkpoint_path: str) -> Optional[str]:
-        """
-        Resolve checkpoint path, handling special values like 'latest'.
-        
-        Args:
-            checkpoint_path: Path or special value
-            
-        Returns:
-            Resolved path or None if not found
-        """
-        if checkpoint_path == "latest":
-            # Use metadata to find the latest checkpoint
-            latest_checkpoint_id = self.checkpoint_handler.metadata.get("last_checkpoint")
-            if latest_checkpoint_id:
-                for checkpoint in self.checkpoint_handler.metadata.get("checkpoints", []):
-                    if checkpoint.get("id") == latest_checkpoint_id:
-                        return checkpoint.get("path")
-            return None
-        
-        # If it's a path, return as is
-        if os.path.exists(checkpoint_path):
-            return checkpoint_path
-        
-        # If it's a checkpoint ID, resolve to path
-        checkpoint_id_path = self.checkpoint_handler._get_checkpoint_path(checkpoint_path)
-        if os.path.exists(checkpoint_id_path):
-            return checkpoint_id_path
-        
-        logger.warning(f"Checkpoint not found: {checkpoint_path}")
-        return None
+        self.setup_checkpoint_handler()
         
     def load_config(self, config_path: str) -> None:
         """
@@ -206,16 +120,26 @@ class LlamaFineTuner:
         self.tracking_config = self.config.get('tracking', {})
         self.checkpoint_config = self.config.get('checkpoint', {})
         self.optimizer_config = self.config.get('optimizer', {})
-        self.scheduler_config = self.config.get('scheduler', {})
-        
-        # Load hyperparameter optimization config if available
-        self.hyperopt_config = self.config.get('hyperopt', {})
         
         # Set important paths
         self.base_model_name = self.model_config.get('base_model', 'meta-llama/Llama-3.3-8B')
         self.output_dir = self.model_config.get('output_dir', 'data/models/finetuned-model/')
         
         logger.info(f"Configuration loaded from {config_path}")
+        
+    def setup_checkpoint_handler(self) -> None:
+        """Set up the checkpoint handler for saving and loading training state."""
+        checkpoint_dir = self.checkpoint_config.get('dir', os.path.join(self.output_dir, 'checkpoints'))
+        max_checkpoints = self.checkpoint_config.get('max_checkpoints', 3)
+        save_optimizer_state = self.checkpoint_config.get('save_optimizer_state', True)
+        
+        self.checkpoint_handler = CheckpointHandler(
+            checkpoint_dir=checkpoint_dir,
+            max_checkpoints=max_checkpoints,
+            save_optimizer_state=save_optimizer_state
+        )
+        
+        logger.info(f"Checkpoint handler initialized at {checkpoint_dir}")
         
     def setup_model(self) -> None:
         """Set up the model with LoRA or QLoRA based on configuration."""
@@ -318,85 +242,101 @@ class LlamaFineTuner:
         logger.info(f"Dataset prepared with max sequence length {max_seq_length}")
         return tokenized_dataset
     
-    def _create_optimizer(self) -> torch.optim.Optimizer:
+    def _create_optimizer(self, model) -> torch.optim.Optimizer:
         """
         Create optimizer based on configuration.
         
+        Args:
+            model: Model to optimize
+            
         Returns:
-            PyTorch optimizer
+            Optimizer instance
         """
-        # Get optimizer parameters
-        optimizer_name = self.optimizer_config.get('name', 'adamw').lower()
-        
-        # Get trainable parameters
-        no_decay = ["bias", "LayerNorm.weight"]
-        params_decay = [p for n, p in self.llama_wrapper.model.named_parameters() 
-                       if p.requires_grad and not any(nd in n for nd in no_decay)]
-        params_nodecay = [p for n, p in self.llama_wrapper.model.named_parameters() 
-                         if p.requires_grad and any(nd in n for nd in no_decay)]
-        
-        # Get weight decay
+        optimizer_type = self.optimizer_config.get('type', 'adamw')
+        lr = self.training_config.get('learning_rate', 2e-5)
         weight_decay = self.optimizer_config.get('weight_decay', 0.01)
         
-        # Get learning rate
-        learning_rate = self.training_config.get('learning_rate', 2e-5)
-        
-        # Define optimizer groups
-        optim_groups = [
-            {"params": params_decay, "weight_decay": weight_decay},
-            {"params": params_nodecay, "weight_decay": 0.0}
+        # Get trainable parameters
+        no_decay = ["bias", "layer_norm.weight"]
+        optimizer_grouped_parameters = [
+            {
+                "params": [
+                    p for n, p in model.named_parameters()
+                    if p.requires_grad and not any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": weight_decay,
+            },
+            {
+                "params": [
+                    p for n, p in model.named_parameters()
+                    if p.requires_grad and any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": 0.0,
+            },
         ]
         
-        # Create optimizer based on name
-        if optimizer_name == 'adamw':
-            from transformers.optimization import AdamW
-            optimizer = AdamW(
-                optim_groups,
-                lr=learning_rate,
-                betas=(self.optimizer_config.get('adam_beta1', 0.9), 
-                       self.optimizer_config.get('adam_beta2', 0.999)),
-                eps=self.optimizer_config.get('adam_epsilon', 1e-8),
+        if optimizer_type.lower() == 'adamw':
+            optimizer = torch.optim.AdamW(
+                optimizer_grouped_parameters,
+                lr=lr,
+                betas=(self.optimizer_config.get('beta1', 0.9), 
+                       self.optimizer_config.get('beta2', 0.999)),
+                eps=self.optimizer_config.get('epsilon', 1e-8),
+                weight_decay=weight_decay
             )
-        elif optimizer_name == 'adafactor':
-            from transformers.optimization import Adafactor
-            optimizer = Adafactor(
-                optim_groups,
-                lr=learning_rate,
-                scale_parameter=self.optimizer_config.get('scale_parameter', False),
-                relative_step=self.optimizer_config.get('relative_step', False),
-                warmup_init=self.optimizer_config.get('warmup_init', False),
-            )
-        elif optimizer_name == 'lion':
-            # If using Lion, make sure it's installed
+        elif optimizer_type.lower() == 'lion':
             try:
                 from lion_pytorch import Lion
                 optimizer = Lion(
-                    optim_groups,
-                    lr=learning_rate,
-                    betas=(self.optimizer_config.get('lion_beta1', 0.9), 
-                           self.optimizer_config.get('lion_beta2', 0.99)),
+                    optimizer_grouped_parameters,
+                    lr=lr,
+                    betas=(self.optimizer_config.get('beta1', 0.9), 
+                           self.optimizer_config.get('beta2', 0.99)),
                     weight_decay=weight_decay
                 )
             except ImportError:
-                logger.warning("Lion optimizer not found, falling back to AdamW. "
-                             "Install with: pip install lion-pytorch")
-                from transformers.optimization import AdamW
-                optimizer = AdamW(optim_groups, lr=learning_rate)
+                logger.warning("Lion optimizer requested but not installed. Using AdamW instead.")
+                optimizer = torch.optim.AdamW(
+                    optimizer_grouped_parameters,
+                    lr=lr,
+                    weight_decay=weight_decay
+                )
+        elif optimizer_type.lower() == 'adafactor':
+            try:
+                from transformers.optimization import Adafactor
+                optimizer = Adafactor(
+                    optimizer_grouped_parameters,
+                    lr=lr,
+                    scale_parameter=self.optimizer_config.get('scale_parameter', False),
+                    relative_step=self.optimizer_config.get('relative_step', False),
+                    warmup_init=self.optimizer_config.get('warmup_init', False),
+                    weight_decay=weight_decay
+                )
+            except ImportError:
+                logger.warning("Adafactor optimizer requested but not available. Using AdamW instead.")
+                optimizer = torch.optim.AdamW(
+                    optimizer_grouped_parameters,
+                    lr=lr,
+                    weight_decay=weight_decay
+                )
         else:
-            logger.warning(f"Unknown optimizer: {optimizer_name}, falling back to AdamW")
-            from transformers.optimization import AdamW
-            optimizer = AdamW(optim_groups, lr=learning_rate)
+            logger.warning(f"Unknown optimizer type {optimizer_type}. Using AdamW instead.")
+            optimizer = torch.optim.AdamW(
+                optimizer_grouped_parameters,
+                lr=lr,
+                weight_decay=weight_decay
+            )
         
-        logger.info(f"Created {optimizer_name} optimizer with learning rate {learning_rate}")
         return optimizer
     
-    def create_trainer(self, train_dataset, eval_dataset=None):
+    def create_trainer(self, train_dataset, eval_dataset=None, resume_from_checkpoint=None):
         """
         Create a Trainer instance for fine-tuning.
         
         Args:
             train_dataset: Training dataset
             eval_dataset: Evaluation dataset (optional)
+            resume_from_checkpoint: Path or checkpoint ID to resume from (optional)
             
         Returns:
             Trainer instance
@@ -437,17 +377,24 @@ class LlamaFineTuner:
             fp16=self.training_config.get('fp16', False),
             
             # Learning rate schedule
-            lr_scheduler_type=self.scheduler_config.get('type', "cosine"),
+            lr_scheduler_type=self.training_config.get('lr_scheduler_type', "cosine"),
             
             # Distributed training
             local_rank=self.local_rank,
             
-            # Tracking
+            # Gradient clipping
+            max_grad_norm=self.training_config.get('max_grad_norm', 1.0),
+            
+            # Optimizer
+            optim=self.optimizer_config.get('type', 'adamw'),
+            
+            # Mixed precision training
+            mixed_precision=self.training_config.get('mixed_precision', None),
+            
+            # Reporting
             report_to=self.tracking_config.get('report_to', ["tensorboard"]),
             
-            # Misc
-            seed=self.training_config.get('seed', 42),
-            data_seed=self.training_config.get('data_seed', 42),
+            # Gradient checkpointing
             gradient_checkpointing=self.training_config.get('gradient_checkpointing', False),
         )
         
@@ -464,24 +411,20 @@ class LlamaFineTuner:
             )
         
         # Add gradient clipping if requested
-        if self.training_config.get('gradient_clipping', False):
-            max_grad_norm = self.training_config.get('max_grad_norm', 1.0)
-            callbacks.append(GradientClippingCallback(max_grad_norm=max_grad_norm))
-            logger.info(f"Enabled gradient clipping with max norm {max_grad_norm}")
-        
-        # Add checkpoint callback if requested
-        if self.training_config.get('use_custom_checkpointing', True):
-            checkpoint_steps = self.training_config.get('checkpoint_save_steps', 500)
+        if self.training_config.get('use_gradient_clipping', True):
             callbacks.append(
-                CustomCheckpointCallback(
-                    checkpoint_handler=self.checkpoint_handler,
-                    checkpoint_steps=checkpoint_steps
+                GradientClippingCallback(
+                    max_grad_norm=self.training_config.get('max_grad_norm', 1.0)
                 )
             )
-            logger.info(f"Enabled custom checkpointing every {checkpoint_steps} steps")
         
-        # Create optimizer if configured
-        optimizer = self.optimizer if self.optimizer else self._create_optimizer()
+        # Add checkpoint callback
+        callbacks.append(CheckpointCallback(self.checkpoint_handler))
+        
+        # Create custom optimizer if specified
+        optimizer = None
+        if self.optimizer_config.get('use_custom_optimizer', False):
+            optimizer = self._create_optimizer(self.llama_wrapper.model)
         
         # Create the trainer
         trainer = Trainer(
@@ -492,73 +435,65 @@ class LlamaFineTuner:
             tokenizer=self.llama_wrapper.tokenizer,
             data_collator=data_collator,
             callbacks=callbacks,
-            optimizers=(optimizer, self.scheduler)  # Pass optimizer and scheduler
+            optimizers=(optimizer, None) if optimizer else (None, None)
         )
+        
+        # Load checkpoint if requested
+        if resume_from_checkpoint:
+            logger.info(f"Attempting to resume from checkpoint: {resume_from_checkpoint}")
+            
+            # Check if it's a checkpoint ID
+            checkpoint_found = False
+            if os.path.exists(resume_from_checkpoint):
+                trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+                checkpoint_found = True
+            else:
+                # Try to load from checkpoint handler
+                model, optimizer_state, scheduler_state, checkpoint_state = self.checkpoint_handler.load_checkpoint(
+                    resume_from_checkpoint,
+                    self.llama_wrapper.model
+                )
+                
+                if checkpoint_state:
+                    logger.info(f"Resuming from checkpoint {resume_from_checkpoint}")
+                    # Set the model state
+                    self.llama_wrapper.model = model
+                    trainer.model = model
+                    
+                    # Set starting epoch/step in trainer
+                    trainer.state.epoch = checkpoint_state.get("epoch", 0)
+                    trainer.state.global_step = checkpoint_state.get("step", 0)
+                    
+                    checkpoint_found = True
+            
+            if not checkpoint_found:
+                logger.warning(f"Checkpoint {resume_from_checkpoint} not found, starting training from scratch")
         
         return trainer
     
-    def resume(self):
-        """Resume training from checkpoint."""
-        logger.info(f"Resuming from checkpoint: {self.resume_from_checkpoint}")
-        
-        # Check if checkpoint path exists
-        if not os.path.exists(self.resume_from_checkpoint):
-            logger.warning(f"Checkpoint path {self.resume_from_checkpoint} not found")
-            return False
-        
-        # Create optimizer
-        if self.optimizer is None:
-            self.optimizer = self._create_optimizer()
-        
-        # Load model and training state from checkpoint
-        model, optimizer, scheduler, checkpoint_state = self.checkpoint_handler.load_checkpoint(
-            checkpoint_id=os.path.basename(self.resume_from_checkpoint),
-            model=self.llama_wrapper.model,
-            optimizer=self.optimizer,
-            scheduler=self.scheduler
-        )
-        
-        # Update model and optimizer
-        self.llama_wrapper.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        
-        # Log resumption info
-        if checkpoint_state:
-            logger.info(f"Resumed from step {checkpoint_state.get('step')} "
-                      f"epoch {checkpoint_state.get('epoch')}")
-            return True
-        else:
-            logger.warning("Checkpoint state not found or empty")
-            return False
-    
-    def train(self, train_dataset, eval_dataset=None):
+    def train(self, train_dataset, eval_dataset=None, resume_from_checkpoint=None):
         """
         Fine-tune the model.
         
         Args:
             train_dataset: Training dataset
             eval_dataset: Evaluation dataset (optional)
+            resume_from_checkpoint: Path or checkpoint ID to resume from (optional)
             
         Returns:
             Training results
         """
         # Create trainer
-        trainer = self.create_trainer(train_dataset, eval_dataset)
+        trainer = self.create_trainer(train_dataset, eval_dataset, resume_from_checkpoint)
         
         # Start training
         logger.info("Starting fine-tuning")
-        train_result = trainer.train(resume_from_checkpoint=self.resume_from_checkpoint)
+        train_result = trainer.train(resume_from_checkpoint=resume_from_checkpoint if os.path.exists(resume_from_checkpoint) else None)
         
         # Save the model
         logger.info(f"Saving fine-tuned model to {self.output_dir}")
         save_adapter_only = self.lora_config.get('use_lora', True) or self.qlora_config.get('use_qlora', False)
         trainer.save_model(self.output_dir)
-        
-        # Save training configuration
-        config_path = os.path.join(self.output_dir, "training_config.json")
-        with open(config_path, 'w') as f:
-            json.dump(self.config, f, indent=2)
         
         # Log training metrics
         metrics = train_result.metrics
@@ -613,3 +548,59 @@ class LlamaFineTuner:
         generation_params = {**generation_config, **kwargs}
         
         return self.llama_wrapper.generate(prompts, **generation_params)
+        
+    def save_adapter(self, output_path=None):
+        """
+        Save the LoRA adapter separately.
+        
+        Args:
+            output_path: Path to save the adapter (optional)
+            
+        Returns:
+            Path to the saved adapter
+        """
+        if output_path is None:
+            output_path = os.path.join(self.output_dir, "adapter")
+        
+        os.makedirs(output_path, exist_ok=True)
+        
+        if hasattr(self.llama_wrapper.model, "save_pretrained"):
+            logger.info(f"Saving LoRA adapter to {output_path}")
+            self.llama_wrapper.model.save_pretrained(output_path)
+            
+            # Save the tokenizer for convenience
+            self.llama_wrapper.tokenizer.save_pretrained(output_path)
+            
+            return output_path
+        else:
+            logger.error("Model does not support save_pretrained")
+            return None
+    
+    def load_adapter(self, adapter_path):
+        """
+        Load a LoRA adapter.
+        
+        Args:
+            adapter_path: Path to the adapter
+            
+        Returns:
+            The model with loaded adapter
+        """
+        if not os.path.exists(adapter_path):
+            logger.error(f"Adapter path {adapter_path} does not exist")
+            return None
+        
+        logger.info(f"Loading LoRA adapter from {adapter_path}")
+        
+        if isinstance(self.llama_wrapper.model, PeftModel):
+            # Already a PEFT model, load adapter
+            self.llama_wrapper.model.load_adapter(adapter_path)
+        else:
+            # Convert to PEFT model and load adapter
+            self.llama_wrapper.model = PeftModel.from_pretrained(
+                self.llama_wrapper.model,
+                adapter_path,
+                is_trainable=True
+            )
+        
+        return self.llama_wrapper.model
