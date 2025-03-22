@@ -11,6 +11,11 @@ pandas>=2.0.0
 numpy>=1.24.0
 tqdm>=4.65.0
 
+# Memory optimization dependencies
+psutil>=5.9.0  # System resource monitoring
+gputil>=1.4.0  # GPU monitoring
+accelerate>=0.25.0  # CPU offloading and optimizations
+
 # Hyperparameter optimization
 optuna>=3.3.0
 ray[tune]>=2.5.1  # For distributed hyperparameter optimization
