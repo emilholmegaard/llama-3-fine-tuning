@@ -1,0 +1,75 @@
+# Configuration template for fine-tuning Llama 3.3 8B on GPUs with limited VRAM (8GB)
+# Optimized for NVIDIA RTX 3070, 2080 Ti, A2000, T4, etc.
+
+model:
+  base_model: "meta-llama/Llama-3.3-8B"
+  output_dir: "data/models/llama-3-3-8b-qlora/"
+  torch_dtype: "float16"  # Use float16 for older GPUs
+  trust_remote_code: true
+
+training:
+  learning_rate: 1e-4  # Higher learning rate for QLoRA
+  batch_size: 1  # Minimum batch size
+  gradient_accumulation_steps: 16  # Larger accumulation for effective batch size
+  num_train_epochs: 3
+  max_steps: -1
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  lr_scheduler_type: "cosine"
+  logging_steps: 10
+  save_steps: 200
+  save_total_limit: 2  # Keep only the last 2 checkpoints to save disk space
+  fp16: true  # Use fp16 precision
+  bf16: false
+  optim: "paged_adamw_8bit"  # Use 8-bit optimizer for memory efficiency
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1e-8
+  max_grad_norm: 1.0
+  gradient_checkpointing: true  # Must enable to fit in 8GB VRAM
+  seed: 42
+  auto_find_batch_size: true  # Automatically find largest working batch size
+
+data:
+  train_file: "data/processed/dataset/train.jsonl"
+  validation_file: "data/processed/dataset/val.jsonl"
+  max_seq_length: 1024  # Reduced sequence length to save memory
+  preprocessing_num_workers: 2  # Reduced workers to save CPU memory
+  overwrite_cache: false
+  pad_to_max_length: false
+  data_format: "instruction"
+  prompt_template: "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n{output}"
+
+lora:
+  use_lora: true
+  r: 8  # Reduced LoRA rank to save memory
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+qlora:
+  use_qlora: true  # Enable QLoRA for extreme memory efficiency
+  bits: 4  # Use 4-bit quantization
+  double_quant: true  # Enable double quantization for extra memory savings
+  quant_type: "nf4"  # Normalized float 4 quantization
+  compute_dtype: "float16"  # Computation precision
+
+# Additional settings for better user experience with limited resources
+output:
+  evaluation_strategy: "steps"
+  evaluation_steps: 200  # Less frequent evaluation to save time
+  report_to: ["tensorboard"]
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+
+# Memory monitoring and optimization - important for limited VRAM
+memory:
+  memory_profiling: true  # Enable memory profiling
+  auto_find_parameters: true  # Automatically find optimal memory parameters
+  dynamic_quantization: true  # Enable dynamic quantization where possible
+  cpu_offload: true  # Offload optimizer states to CPU
+  max_memory_MB: 7000  # Set maximum memory usage (in MB)
+  aggressive_memory_optimization: true  # Enable aggressive memory optimization
