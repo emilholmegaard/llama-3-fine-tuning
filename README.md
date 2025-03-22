@@ -28,19 +28,50 @@ cd llama-3-fine-tuning
 pip install -r requirements.txt
 ```
 
+## Documentation
+
+Comprehensive documentation is available in the [docs](./docs) directory:
+
+- [**Getting Started**](./docs/getting_started.md): Installation, setup, and prerequisites
+- [**Data Preparation**](./docs/data_preparation.md): Processing documents and logs
+- [**Fine-Tuning Guides**](./docs/fine_tuning/README.md):
+  - [Basic Fine-Tuning](./docs/fine_tuning/basic_fine_tuning.md)
+  - [Advanced Configuration](./docs/fine_tuning/advanced_configuration.md)
+  - [Memory Optimization](./docs/memory_optimization.md)
+  - [Hyperparameter Optimization](./docs/fine_tuning/hyperparameter_optimization.md)
+- [**Troubleshooting**](./docs/troubleshooting.md): Common issues and solutions
+
+## Example Notebooks
+
+Interactive Jupyter notebooks demonstrating various workflows are available in the [notebooks](./notebooks) directory:
+
+- [Basic Fine-Tuning](./notebooks/01_basic_fine_tuning.ipynb): Step-by-step guide to fine-tuning with LoRA
+- Additional notebooks for document processing, database logs, and advanced techniques
+
+## Configuration Templates
+
+Ready-to-use configuration templates for different hardware setups and use cases are available in [config/templates](./config/templates):
+
+- [Consumer GPU (16GB VRAM)](./config/templates/consumer_gpu_8b.yaml)
+- [Low Memory (8GB VRAM)](./config/templates/low_memory_8b.yaml)
+
 ## Project Structure
 
 ```
 llama-3-fine-tuning/
 ├── config/                  # Configuration files
 │   ├── default_config.yaml  # Default configuration
-│   └── finetune_config.yaml # Fine-tuning specific settings
+│   ├── finetune_config.yaml # Fine-tuning specific settings
+│   └── templates/           # Configuration templates
 ├── data/                    # Data directory (git-ignored)
 │   ├── raw/                 # Place raw data here
 │   ├── processed/           # Processed data
 │   └── models/              # Fine-tuned models
 ├── docs/                    # Documentation
-│   └── memory_optimization.md  # Memory optimization guide
+│   ├── getting_started.md   # Installation and setup guide
+│   ├── data_preparation.md  # Data processing guide
+│   ├── fine_tuning/         # Fine-tuning guides
+│   └── memory_optimization.md # Memory optimization guide
 ├── notebooks/               # Jupyter notebooks for exploration
 ├── src/                     # Source code
 │   ├── data/                # Data processing modules
@@ -164,44 +195,7 @@ python scripts/evaluate_model.py --model_path data/models/finetuned-model/ --tes
 
 ## Fine-Tuning Configuration
 
-Edit `config/finetune_config.yaml` to customize fine-tuning parameters:
-
-```yaml
-model:
-  base_model: "meta-llama/Llama-3.3-8B"  # Base model
-  output_dir: "data/models/finetuned-model/"  # Output directory
-
-training:
-  learning_rate: 2e-5
-  batch_size: 8
-  gradient_accumulation_steps: 4
-  num_train_epochs: 3
-  max_steps: -1  # -1 means train for num_train_epochs
-  warmup_steps: 500
-  save_steps: 1000
-  logging_steps: 100
-  bf16: true  # Use bfloat16 precision
-
-data:
-  train_file: "data/processed/dataset/train.jsonl"
-  validation_file: "data/processed/dataset/val.jsonl"
-  max_seq_length: 2048
-  preprocessing_num_workers: 4
-
-lora:  # Low-Rank Adaptation parameters
-  use_lora: true
-  r: 16  # Rank of the update matrices
-  alpha: 32  # Scaling factor
-  dropout: 0.05
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-
-# Optional: QLoRA for even more memory-efficient training
-qlora:
-  use_qlora: false  # Set to true to use QLoRA
-  bits: 4  # 4-bit quantization
-  double_quant: true  # Double quantization
-  quant_type: "nf4"  # Normalized Float 4
-```
+Edit `config/finetune_config.yaml` to customize fine-tuning parameters. For detailed parameter explanations, see the [Advanced Configuration Guide](./docs/fine_tuning/advanced_configuration.md).
 
 ## Memory-Efficient Training
 
@@ -233,24 +227,7 @@ These optimizations make it possible to fine-tune models like Llama 3.3 8B on co
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Out of Memory Errors**:
-   - Use the memory-efficient training script
-   - Reduce batch size
-   - Use gradient accumulation
-   - Enable mixed precision training
-   - Use parameter-efficient methods like LoRA/QLoRA
-
-2. **Slow Processing**:
-   - Increase `preprocessing_num_workers`
-   - Pre-process data in smaller batches
-
-3. **Poor Model Performance**:
-   - Check data quality and formatting
-   - Try different learning rates
-   - Increase training time
-   - Ensure data is relevant to your target task
+For a comprehensive list of common issues and solutions, see the [Troubleshooting Guide](./docs/troubleshooting.md).
 
 ## Contributing
 
