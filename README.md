@@ -10,6 +10,9 @@ A Python project for fine-tuning Llama 3.3 models using document data from Word 
 - **Fine-Tuning Integration**: Support for Llama 3.3 fine-tuning using modern techniques
 - **Evaluation Tools**: Metrics and evaluation scripts to assess model performance
 - **Memory Optimization**: Advanced QLoRA techniques for fine-tuning in memory-constrained environments
+- **Batch Processing**: Process large collections of documents and logs in parallel
+- **Inference Utilities**: Run inference with fine-tuned models in various modes
+- **Model Comparison**: Compare performance across different model versions
 
 ## Prerequisites
 
@@ -39,6 +42,11 @@ Comprehensive documentation is available in the [docs](./docs) directory:
   - [Advanced Configuration](./docs/fine_tuning/advanced_configuration.md)
   - [Memory Optimization](./docs/memory_optimization.md)
   - [Hyperparameter Optimization](./docs/fine_tuning/hyperparameter_optimization.md)
+- [**Utility Scripts**](./docs/utilities/README.md):
+  - [Batch Processor](./docs/utilities/batch_processor.md)
+  - [Data Conversion](./docs/utilities/data_conversion.md)
+  - [Model Comparison](./docs/utilities/model_comparison.md)
+  - [Inference Runner](./docs/utilities/inference_runner.md)
 - [**Troubleshooting**](./docs/troubleshooting.md): Common issues and solutions
 
 ## Example Notebooks
@@ -71,6 +79,7 @@ llama-3-fine-tuning/
 │   ├── getting_started.md   # Installation and setup guide
 │   ├── data_preparation.md  # Data processing guide
 │   ├── fine_tuning/         # Fine-tuning guides
+│   ├── utilities/           # Utility scripts documentation
 │   └── memory_optimization.md # Memory optimization guide
 ├── notebooks/               # Jupyter notebooks for exploration
 ├── src/                     # Source code
@@ -95,7 +104,12 @@ llama-3-fine-tuning/
 │   ├── process_logs.py      # Process DB logs
 │   ├── prepare_dataset.py   # Prepare training dataset
 │   ├── run_finetuning.py    # Run fine-tuning
-│   └── run_memory_efficient_training.py # Run memory-efficient training
+│   ├── run_memory_efficient_training.py # Run memory-efficient training
+│   ├── evaluate_model.py    # Evaluate model performance
+│   ├── advanced_evaluate.py # Advanced evaluation tools
+│   ├── compare_models.py    # Compare model versions
+│   ├── run_inference.py     # Run inference with models
+│   └── batch_processor.py   # Process documents and logs in batch
 ├── tests/                   # Unit tests
 ├── .gitignore               # Git ignore file
 ├── requirements.txt         # Project dependencies
@@ -105,6 +119,20 @@ llama-3-fine-tuning/
 ## Usage Guide
 
 ### 1. Data Preparation
+
+#### Batch Processing
+
+Process multiple documents and logs in parallel:
+
+```bash
+python scripts/batch_processor.py \
+    --input_dirs data/raw/documents/ data/raw/logs/ \
+    --output_dir data/processed/ \
+    --recursive \
+    --preserve_structure
+```
+
+For more options, see the [Batch Processor Documentation](./docs/utilities/batch_processor.md).
 
 #### Processing Word Documents
 
@@ -152,6 +180,8 @@ Options:
 - `--train_split`: Train/validation split ratio (default: 0.8)
 - `--format`: Output format (jsonl, csv, parquet)
 
+For more options, see the [Data Conversion Documentation](./docs/utilities/data_conversion.md).
+
 ### 3. Fine-Tuning
 
 #### Standard Fine-Tuning
@@ -187,11 +217,62 @@ This script implements advanced QLoRA optimization techniques to minimize memory
 
 ### 4. Evaluation
 
+#### Basic Evaluation
+
 Evaluate the fine-tuned model:
 
 ```bash
-python scripts/evaluate_model.py --model_path data/models/finetuned-model/ --test_data data/processed/dataset/test.jsonl --output_dir data/evaluation/
+python scripts/evaluate_model.py \
+    --model_path data/models/finetuned-model/ \
+    --test_data data/processed/dataset/test.jsonl \
+    --output_dir data/evaluation/
 ```
+
+#### Advanced Evaluation
+
+Perform detailed evaluation with error analysis:
+
+```bash
+python scripts/advanced_evaluate.py \
+    --model_paths data/models/finetuned-model/ \
+    --test_data data/processed/dataset/test.jsonl \
+    --output_dir data/evaluation/advanced/ \
+    --error_analysis \
+    --visualize
+```
+
+#### Compare Models
+
+Compare performance across different model versions:
+
+```bash
+python scripts/compare_models.py \
+    --eval_dirs data/evaluation/ \
+    --output_dir data/comparisons/ \
+    --visualize \
+    --trend_analysis
+```
+
+For more options, see the [Model Comparison Documentation](./docs/utilities/model_comparison.md).
+
+### 5. Inference
+
+Run inference with your fine-tuned model:
+
+```bash
+# Interactive mode
+python scripts/run_inference.py \
+    --model_path data/models/finetuned-model/ \
+    --interactive
+
+# Batch processing
+python scripts/run_inference.py \
+    --model_path data/models/finetuned-model/ \
+    --input_file data/queries.csv \
+    --output_file data/responses.csv
+```
+
+For more options, see the [Inference Runner Documentation](./docs/utilities/inference_runner.md).
 
 ## Fine-Tuning Configuration
 
