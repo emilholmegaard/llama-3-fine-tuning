@@ -1,0 +1,67 @@
+# Configuration template for fine-tuning Llama 3.3 8B on a consumer GPU with 16GB VRAM
+# Optimized for NVIDIA RTX 3090, 4090, A4000, A5000, etc.
+
+model:
+  base_model: "meta-llama/Llama-3.3-8B"
+  output_dir: "data/models/llama-3-3-8b-tuned/"
+  torch_dtype: "bfloat16"  # Use bfloat16 for better numerical stability
+  use_flash_attention: true  # Use Flash Attention if available
+  trust_remote_code: true  # Trust remote code from the model's repository
+
+training:
+  learning_rate: 2e-5
+  batch_size: 4  # Adjust based on your GPU memory
+  gradient_accumulation_steps: 4  # Effective batch size = batch_size * gradient_accumulation_steps
+  num_train_epochs: 3
+  max_steps: -1  # -1 means train for num_train_epochs
+  warmup_ratio: 0.05  # 5% of total steps
+  weight_decay: 0.01
+  lr_scheduler_type: "cosine"  # Cosine schedule with warmup
+  logging_steps: 25
+  save_steps: 500
+  save_total_limit: 3  # Keep only the last 3 checkpoints
+  bf16: true  # Use bfloat16 precision (for Ampere+ GPUs)
+  fp16: false  # Use fp16 precision (for older GPUs)
+  optim: "adamw_torch"
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1e-8
+  max_grad_norm: 1.0
+  gradient_checkpointing: true  # Enable gradient checkpointing to save memory
+  seed: 42
+
+data:
+  train_file: "data/processed/dataset/train.jsonl"
+  validation_file: "data/processed/dataset/val.jsonl"
+  max_seq_length: 2048  # Adjust based on your GPU memory and task requirements
+  preprocessing_num_workers: 4
+  overwrite_cache: false
+  pad_to_max_length: false
+  data_format: "instruction"  # Use "instruction" for instruction fine-tuning, "text" for causal language modeling
+  prompt_template: "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n{output}"
+
+lora:
+  use_lora: true
+  r: 16  # LoRA attention dimension
+  alpha: 32  # LoRA alpha parameter
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]  # Attention modules
+  bias: "none"  # Don't train bias terms
+  task_type: "CAUSAL_LM"  # Task type for LoRA
+
+qlora:
+  use_qlora: false  # Not using QLoRA for 16GB+ VRAM GPUs
+
+# Additional settings for better user experience
+output:
+  evaluation_strategy: "steps"  # Evaluate model during training
+  evaluation_steps: 100  # Evaluate every 100 steps
+  report_to: ["tensorboard"]  # Report metrics to TensorBoard
+  load_best_model_at_end: true  # Load the best model at the end of training
+  metric_for_best_model: "eval_loss"  # Use validation loss as the metric for best model
+  greater_is_better: false  # Lower loss is better
+
+# Memory monitoring and optimization
+memory:
+  memory_profiling: false  # Enable to get detailed memory usage statistics
+  auto_find_batch_size: false  # Set to true to automatically find the largest working batch size
