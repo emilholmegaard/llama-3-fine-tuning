@@ -9,6 +9,7 @@ A Python project for fine-tuning Llama 3.3 models using document data from Word 
 - **Flexible Data Pipeline**: Configurable data processing steps for cleaning and formatting
 - **Fine-Tuning Integration**: Support for Llama 3.3 fine-tuning using modern techniques
 - **Evaluation Tools**: Metrics and evaluation scripts to assess model performance
+- **Memory Optimization**: Advanced QLoRA techniques for fine-tuning in memory-constrained environments
 
 ## Prerequisites
 
@@ -38,6 +39,8 @@ llama-3-fine-tuning/
 │   ├── raw/                 # Place raw data here
 │   ├── processed/           # Processed data
 │   └── models/              # Fine-tuned models
+├── docs/                    # Documentation
+│   └── memory_optimization.md  # Memory optimization guide
 ├── notebooks/               # Jupyter notebooks for exploration
 ├── src/                     # Source code
 │   ├── data/                # Data processing modules
@@ -46,14 +49,22 @@ llama-3-fine-tuning/
 │   │   └── dataset.py         # Dataset creation
 │   ├── models/              # Model-related code
 │   │   ├── llama_wrapper.py   # Llama model wrapper
-│   │   └── fine_tuning.py     # Fine-tuning utilities
+│   │   ├── fine_tuning.py     # Fine-tuning utilities
+│   │   ├── qlora_optimizer.py # QLoRA optimization
+│   │   └── memory_efficient_trainer.py # Memory-efficient training
 │   ├── utils/               # Utility functions
+│   │   ├── memory_utils.py    # Memory monitoring utilities
+│   │   ├── memory_estimation.py # Memory estimation utilities
+│   │   ├── memory_tracker.py   # Memory tracking utilities
+│   │   ├── batch_optimizer.py  # Batch size optimization
+│   │   └── cpu_offload.py      # CPU offloading utilities
 │   └── evaluation/          # Evaluation metrics and tools
 ├── scripts/                 # Utility scripts
 │   ├── process_docs.py      # Process Word documents
 │   ├── process_logs.py      # Process DB logs
 │   ├── prepare_dataset.py   # Prepare training dataset
-│   └── run_finetuning.py    # Run fine-tuning
+│   ├── run_finetuning.py    # Run fine-tuning
+│   └── run_memory_efficient_training.py # Run memory-efficient training
 ├── tests/                   # Unit tests
 ├── .gitignore               # Git ignore file
 ├── requirements.txt         # Project dependencies
@@ -112,7 +123,9 @@ Options:
 
 ### 3. Fine-Tuning
 
-Run the fine-tuning script:
+#### Standard Fine-Tuning
+
+Run the standard fine-tuning script:
 
 ```bash
 python scripts/run_finetuning.py --config config/finetune_config.yaml
@@ -123,6 +136,23 @@ The configuration file allows you to set:
 - Training duration (epochs, steps)
 - Evaluation metrics
 - Output paths
+
+#### Memory-Efficient Fine-Tuning
+
+For environments with limited GPU memory, use the memory-efficient training script:
+
+```bash
+python scripts/run_memory_efficient_training.py \
+    --model_name_or_path meta-llama/Llama-3.3-8B \
+    --output_dir ./outputs \
+    --bits 4 \
+    --lora_r 16 \
+    --auto_find_batch_size \
+    --auto_find_parameters \
+    --memory_profiling
+```
+
+This script implements advanced QLoRA optimization techniques to minimize memory usage. See [Memory Optimization Guide](docs/memory_optimization.md) for more details.
 
 ### 4. Evaluation
 
@@ -164,7 +194,27 @@ lora:  # Low-Rank Adaptation parameters
   alpha: 32  # Scaling factor
   dropout: 0.05
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+# Optional: QLoRA for even more memory-efficient training
+qlora:
+  use_qlora: false  # Set to true to use QLoRA
+  bits: 4  # 4-bit quantization
+  double_quant: true  # Double quantization
+  quant_type: "nf4"  # Normalized Float 4
 ```
+
+## Memory-Efficient Training
+
+This project implements advanced memory optimization techniques for fine-tuning large language models on limited hardware:
+
+- **4-bit Quantization**: Reduces model memory footprint by 4x
+- **QLoRA**: Parameter-efficient fine-tuning without quality loss
+- **Gradient Checkpointing**: Trades compute for memory
+- **CPU Offloading**: Offloads optimizer states to CPU
+- **Automatic Batch Sizing**: Dynamically finds optimal batch size
+- **Memory Profiling**: Tracks and analyzes memory usage
+
+These optimizations make it possible to fine-tune models like Llama 3.3 8B on consumer GPUs with as little as 8GB VRAM. See the [Memory Optimization Guide](docs/memory_optimization.md) for detailed documentation.
 
 ## Tips for Effective Fine-Tuning
 
@@ -186,6 +236,7 @@ lora:  # Low-Rank Adaptation parameters
 ### Common Issues
 
 1. **Out of Memory Errors**:
+   - Use the memory-efficient training script
    - Reduce batch size
    - Use gradient accumulation
    - Enable mixed precision training
